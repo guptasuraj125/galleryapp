@@ -18,6 +18,13 @@ export function getBackblaze() {
     endpoint,
     forcePathStyle: true,
     credentials: { accessKeyId, secretAccessKey },
+    // AWS SDK v3 enables newer S3 checksum behavior by default. Backblaze
+    // B2 is S3-compatible but this response-checksum mode can produce
+    // x-amz-checksum-mode=ENABLED on presigned GET URLs. A browser <img>
+    // or <video> request cannot provide the matching x-amz header, so B2
+    // rejects the URL with 403. Only apply checksums when required.
+    requestChecksumCalculation: "WHEN_REQUIRED",
+    responseChecksumValidation: "WHEN_REQUIRED",
   });
   return { client, bucketName };
 }
@@ -37,10 +44,8 @@ export async function createB2DownloadUrl(key: string, contentType: string, _fil
   const { client, bucketName } = getBackblaze();
 
   // Backblaze B2's S3 GetObject API does not support the AWS
-  // response-content-disposition override. Including it in a signed
-  // request can make B2 reject an otherwise valid presigned URL.
-  // Keep the presigned request limited to parameters B2 documents as
-  // supported, while preserving the stored Content-Type.
+  // response-content-disposition override. Keep the presigned request
+  // limited to parameters B2 documents as supported.
   return getSignedUrl(client, new GetObjectCommand({
     Bucket: bucketName,
     Key: key,
