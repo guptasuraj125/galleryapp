@@ -33,15 +33,19 @@ export function makeB2ObjectKey(spaceId: string, filename: string) {
   return `memories/${spaceId}/${crypto.randomUUID()}-${safeName}`;
 }
 
-export async function createB2DownloadUrl(key: string, contentType: string, filename: string) {
+export async function createB2DownloadUrl(key: string, contentType: string, _filename: string) {
   const { client, bucketName } = getBackblaze();
-  const safeDispositionName = filename.replace(/[\r\n"\\]/g, "_").slice(0, 200);
+
+  // Backblaze B2's S3 GetObject API does not support the AWS
+  // response-content-disposition override. Including it in a signed
+  // request can make B2 reject an otherwise valid presigned URL.
+  // Keep the presigned request limited to parameters B2 documents as
+  // supported, while preserving the stored Content-Type.
   return getSignedUrl(client, new GetObjectCommand({
     Bucket: bucketName,
     Key: key,
     ResponseContentType: contentType,
-    ResponseContentDisposition: `inline; filename="${safeDispositionName}"`,
-  }), { expiresIn: 60 * 60 * 24 * 7 });
+  }), { expiresIn: 60 * 60 });
 }
 
 export async function verifyB2Object(key: string) {
