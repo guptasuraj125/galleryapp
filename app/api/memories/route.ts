@@ -2,6 +2,7 @@ import { Types } from "mongoose";
 import { z } from "zod";
 import { getUserSpaceMembership } from "@/src/lib/auth";
 import { errorJson, isSameOrigin, logApiError, successJson } from "@/src/lib/api-response";
+import { buildImageKitUrl } from "@/src/lib/imagekit";
 import {
   getAuthenticatedAssetVersion,
   getAuthenticatedDeliveryUrls,
@@ -237,7 +238,7 @@ export async function GET(request: Request) {
       tagIds.length ? Tag.find({ _id: { $in: tagIds }, spaceId: auth.membership.spaceId }).lean() : [],
     ]);
     const versionByAssetId = new Map<string, number>();
-    const assetsNeedingVersion = assets.filter((asset) => asset.provider !== "backblaze" && !asset.version);
+    const assetsNeedingVersion = assets.filter((asset) => asset.provider === "cloudinary" && !asset.version);
     for (let start = 0; start < assetsNeedingVersion.length; start += 6) {
       await Promise.all(assetsNeedingVersion.slice(start, start + 6).map(async (asset) => {
         try {
@@ -252,12 +253,19 @@ export async function GET(request: Request) {
     const locationById = new Map(locations.map((location) => [String(location._id), location]));
     const tagById = new Map(tags.map((tag) => [String(tag._id), tag]));
     const assetById = new Map(assets.map((asset) => [String(asset._id), asset]));
-    const deliveryByAssetId = new Map<string, { url: string; posterUrl?: string }>();
+    const deliveryByAssetId = new Map<string, { url: string; thumbnailUrl?: string; posterUrl?: string }>();
     await Promise.all(assets.map(async (asset) => {
       if (asset.provider === "backblaze") {
         const key = asset.storageKey ?? asset.publicId;
         deliveryByAssetId.set(String(asset._id), {
           url: `/api/media/content?${new URLSearchParams({ key }).toString()}`,
+        });
+      } else if (asset.provider === "imagekit") {
+        deliveryByAssetId.set(String(asset._id), {
+          url: buildImageKitUrl(asset.storageKey ?? asset.publicId, asset.resourceType),
+          ...(asset.resourceType === "image"
+            ? { thumbnailUrl: buildImageKitUrl(asset.storageKey ?? asset.publicId, "image", "thumbnail") }
+            : { posterUrl: buildImageKitUrl(asset.storageKey ?? asset.publicId, "video", "poster") }),
         });
       } else {
         const delivery = getAuthenticatedDeliveryUrls(
@@ -295,6 +303,7 @@ export async function GET(request: Request) {
           originalFilename: asset.originalFilename,
           folderPath: asset.folderPath ?? "",
           url: delivery.url,
+          ...(delivery.thumbnailUrl ? { thumbnailUrl: delivery.thumbnailUrl } : {}),
           ...(delivery?.posterUrl ? { posterUrl: delivery.posterUrl } : {}),
         }];
       }),

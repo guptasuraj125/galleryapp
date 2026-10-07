@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useSyncExternalStore } from "react";
-import { Monitor, Moon, Sun } from "lucide-react";
+import { Moon, Sun } from "lucide-react";
 
 type ThemeChoice = "light" | "dark" | "system";
 const themeChangeEvent = "ghumi-theme-change";
@@ -37,6 +37,11 @@ function subscribe(onChange: () => void) {
 
 export function ThemeToggle() {
   const choice = useSyncExternalStore<ThemeChoice>(subscribe, readChoice, () => "system" as ThemeChoice);
+  const isDark = useSyncExternalStore(
+    subscribe,
+    () => document.documentElement.dataset.theme === "dark",
+    () => false,
+  );
 
   useEffect(() => {
     applyChoice(choice);
@@ -51,16 +56,15 @@ export function ThemeToggle() {
     window.dispatchEvent(new Event(themeChangeEvent));
   }
 
-  const Icon = choice === "system" ? Monitor : choice === "dark" ? Moon : Sun;
   return (
-    <label className="theme-toggle" title="Color theme">
-      <Icon aria-hidden="true" size={15} />
-      <span className="visually-hidden">Theme</span>
-      <select aria-label="Theme" onChange={(event) => updateTheme(event.target.value as ThemeChoice)} value={choice}>
-        <option value="light">Light</option>
-        <option value="dark">Dark</option>
-        <option value="system">System</option>
-      </select>
-    </label>
+    <button
+      aria-label={`Switch to ${isDark ? "light" : "dark"} mode`}
+      className="theme-toggle"
+      onClick={() => updateTheme(isDark ? "light" : "dark")}
+      title={`Switch to ${isDark ? "light" : "dark"} mode`}
+      type="button"
+    >
+      {isDark ? <Sun aria-hidden="true" size={17} /> : <Moon aria-hidden="true" size={17} />}
+    </button>
   );
 }

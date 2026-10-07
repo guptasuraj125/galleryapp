@@ -5,7 +5,8 @@ export interface UploadItemRecord {
   uploadJobId: Types.ObjectId;
   mediaAssetId?: Types.ObjectId;
   publicId: string;
-  provider: "cloudinary" | "backblaze";
+  storageKey?: string;
+  provider: "cloudinary" | "backblaze" | "imagekit";
   resourceType: "image" | "video";
   contentType: string;
   originalFilename: string;
@@ -20,7 +21,8 @@ const uploadItemSchema = new Schema<UploadItemRecord>(
     uploadJobId: { type: Schema.Types.ObjectId, ref: "UploadJob", required: true },
     mediaAssetId: { type: Schema.Types.ObjectId, ref: "MediaAsset" },
     publicId: { type: String, required: true, trim: true, maxlength: 255 },
-    provider: { type: String, enum: ["cloudinary", "backblaze"], default: "cloudinary", required: true },
+    storageKey: { type: String, trim: true, maxlength: 1024 },
+    provider: { type: String, enum: ["cloudinary", "backblaze", "imagekit"], default: "cloudinary", required: true },
     resourceType: { type: String, enum: ["image", "video"], required: true },
     contentType: { type: String, required: true, trim: true, maxlength: 127 },
     originalFilename: { type: String, required: true, trim: true, maxlength: 255 },

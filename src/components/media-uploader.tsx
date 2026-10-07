@@ -194,17 +194,16 @@ async function requestJson<T extends JsonResponse>(url: string, body: unknown): 
   return readJson<T>(response);
 }
 
-function uploadB2File(
-  endpoint: string,
+function uploadImageKitFile(
+  target: UploadTarget,
   file: File,
-  contentType: string,
   onProgress: (bytesSent: number) => void,
   onXhr: (xhr: XMLHttpRequest | null) => void,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("PUT", endpoint);
-    xhr.setRequestHeader("Content-Type", contentType);
+    xhr.open("PUT", target.uploadUrl);
+    xhr.setRequestHeader("Content-Type", target.contentType);
     onXhr(xhr);
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) {
@@ -229,7 +228,7 @@ function uploadB2File(
         return;
       }
       if (xhr.status < 200 || xhr.status >= 300) {
-        reject(new Error(response.error ?? `Backblaze upload failed (HTTP ${xhr.status}).`));
+        reject(new Error(response.error ?? `ImageKit upload failed (HTTP ${xhr.status}).`));
         return;
       }
       resolve();
@@ -396,10 +395,9 @@ export function MediaUploader() {
       });
       itemId = params.itemId;
       if (cancelledIds.current.has(entry.id)) throw new Error("This upload was cancelled.");
-      await uploadB2File(
-        params.uploadUrl,
+      await uploadImageKitFile(
+        params,
         file,
-        params.contentType,
         updateProgress,
         (xhr) => {
           if (xhr) activeRequests.current.set(entry.id, xhr);
@@ -429,7 +427,7 @@ export function MediaUploader() {
         try {
           const failure = await requestJson<UploadFailureResponse>("/api/uploads/fail", { itemId });
           if (failure.cleanupPending) {
-            setNotice("The failed upload was recorded, but storage cleanup is pending. Check your Backblaze B2 settings.");
+            setNotice("The failed upload was recorded, but storage cleanup is pending. Check your ImageKit settings.");
           }
         } catch (recordError) {
           console.error("[upload] Failed to record upload failure", recordError);

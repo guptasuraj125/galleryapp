@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { getBackblaze, makeB2ObjectKey } from "@/src/lib/backblaze";
+import { getImageKit, makeImageKitObjectKey } from "@/src/lib/imagekit";
 import { getCurrentUser } from "@/src/lib/auth";
 import { connectToDatabase } from "@/src/lib/mongodb";
 import { consumeRateLimit } from "@/src/lib/rate-limit";
@@ -106,10 +106,10 @@ async function initiateUpload(request: Request) {
   }
 
   try {
-    getBackblaze();
+    getImageKit();
   } catch (error) {
-    logApiError("upload-initiate-b2-config", error);
-    return errorJson("Backblaze B2 isn't configured. Add the B2 environment variables and restart the app.", 503);
+    logApiError("upload-initiate-imagekit-config", error);
+    return errorJson("ImageKit isn't configured. Add the IMAGEKIT_PUBLIC_KEY, IMAGEKIT_PRIVATE_KEY, and IMAGEKIT_URL_ENDPOINT variables and restart the app.", 503);
   }
 
   let uploadJobId: string | undefined;
@@ -123,11 +123,12 @@ async function initiateUpload(request: Request) {
       idempotencyKey: randomUUID(),
     });
     uploadJobId = uploadJob.id;
-  const publicId = makeB2ObjectKey(space.id, filename);
+  const storageKey = makeImageKitObjectKey(space.id, filename, folderPath);
   const uploadItem = await UploadItem.create({
     uploadJobId: uploadJob._id,
-    publicId,
-    provider: "backblaze",
+    publicId: randomUUID(),
+    storageKey,
+    provider: "imagekit",
     resourceType: mediaType.resourceType,
     contentType: mediaType.contentType,
     originalFilename: filename,

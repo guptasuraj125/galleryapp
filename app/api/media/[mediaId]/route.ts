@@ -1,6 +1,7 @@
 import { Types } from "mongoose";
 import { getUserSpaceMembership } from "@/src/lib/auth";
 import { deleteB2Object } from "@/src/lib/backblaze";
+import { deleteImageKitObject } from "@/src/lib/imagekit";
 import { errorJson, isSameOrigin, logApiError, successJson } from "@/src/lib/api-response";
 import { getCloudinary, getCloudinaryErrorMessage } from "@/src/lib/cloudinary";
 import { removeEmptyUploadMemories } from "@/src/lib/memory-cleanup";
@@ -37,6 +38,8 @@ export async function DELETE(_request: Request, context: RouteContext) {
     try {
       if (asset.provider === "backblaze") {
         await deleteB2Object(asset.storageKey ?? asset.publicId);
+      } else if (asset.provider === "imagekit") {
+        await deleteImageKitObject(asset.publicId);
       } else {
         const { cloudinary } = getCloudinary();
         const destroyResult = await cloudinary.uploader.destroy(asset.publicId, {

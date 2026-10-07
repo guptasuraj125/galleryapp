@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { deleteB2Object } from "@/src/lib/backblaze";
+import { deleteImageKitObject } from "@/src/lib/imagekit";
 import { getCurrentUser } from "@/src/lib/auth";
 import { errorJson, isSameOrigin, logApiError, successJson } from "@/src/lib/api-response";
 import { getCloudinary } from "@/src/lib/cloudinary";
@@ -38,8 +39,12 @@ async function failUpload(request: Request) {
   let cleanupPending = false;
   if (item.status !== "completed") {
     try {
-      if (item.provider === "backblaze") {
-        await deleteB2Object(item.publicId);
+      if (item.provider === "imagekit") {
+        if (item.status === "processing" && item.storageKey) {
+          await deleteImageKitObject(item.publicId, item.storageKey);
+        }
+      } else if (item.provider === "backblaze") {
+        await deleteB2Object(item.storageKey ?? item.publicId);
       } else {
         const { cloudinary } = getCloudinary();
         const result = await cloudinary.uploader.destroy(item.publicId, {

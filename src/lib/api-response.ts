@@ -28,6 +28,8 @@ export function logApiError(scope: string, error: unknown) {
     process.env.INITIAL_SETUP_TOKEN,
     process.env.CLOUDINARY_API_KEY,
     process.env.CLOUDINARY_API_SECRET,
+    process.env.IMAGEKIT_PRIVATE_KEY,
+    process.env.IMAGEKIT_PUBLIC_KEY,
     process.env.B2_APPLICATION_KEY_ID,
     process.env.B2_APPLICATION_KEY,
   ].filter((secret): secret is string => Boolean(secret));

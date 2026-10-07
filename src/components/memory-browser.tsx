@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import Image from "next/image";
 import Link from "next/link";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { ArrowLeft, ArrowRight, Download, Expand, Heart, MapPin, Minus, Plus, RotateCcw, RotateCw, Search, Share2, Trash2, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Download, Expand, Heart, MapPin, Minus, Pause, Play, Plus, RotateCcw, RotateCw, Search, Share2, Trash2, X } from "lucide-react";
 import { readJson } from "@/src/lib/api-response";
 import { ThemeToggle } from "@/src/components/theme-toggle";
 
@@ -29,6 +29,7 @@ interface MemoryMedia {
   originalFilename: string;
   folderPath: string;
   url: string;
+  thumbnailUrl?: string;
   posterUrl?: string;
   createdAt?: string;
 }
@@ -61,7 +62,7 @@ const titles: Record<Mode, string> = {
   videos: "Moving memories",
   timeline: "A life, in little days",
   places: "Places we keep",
-  favorites: "The ones we hold close",
+  favorites: "Liked photos & videos",
   "on-this-day": "On this day",
   search: "Find a little something",
 };
@@ -137,6 +138,7 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
   const [page, setPage] = useState(0);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<{ memory: MemoryItem; media?: MemoryMedia } | null>(null);
+  const [pendingViewerPage, setPendingViewerPage] = useState<{ direction: 1 | -1; page: number } | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -153,11 +155,13 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
   const [imagePan, setImagePan] = useState({ x: 0, y: 0 });
   const [imageRotation, setImageRotation] = useState(0);
   const [videoRotation, setVideoRotation] = useState(0);
+  const [slideshowPlaying, setSlideshowPlaying] = useState(false);
   const [viewerSize, setViewerSize] = useState({ width: 0, height: 0 });
   const [videoRatio, setVideoRatio] = useState(16 / 9);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const lastPointer = useRef<{ x: number; y: number } | null>(null);
   const pinchStart = useRef<{ distance: number; zoom: number } | null>(null);
+  const viewerTouchStart = useRef<{ x: number; y: number } | null>(null);
   const lightboxMediaRef = useRef<HTMLDivElement>(null);
   const galleryTopRef = useRef<HTMLDivElement>(null);
   const scrollToPageAfterLoad = useRef(false);
@@ -239,8 +243,7 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
   );
   const allVisibleSelected = visibleMediaIds.length > 0 && visibleMediaIds.every((id) => selectedMediaIds.includes(id));
   const profileImage = galleryMedia.find(({ media }) => media.resourceType === "image")?.media;
-  const profileVideo = galleryMedia.find(({ media }) => media.resourceType === "video")?.media;
-  const profileImageUrl = profileImage?.url ?? profileVideo?.posterUrl;
+  const profileImageUrl = profileImage?.url;
 
   useEffect(() => {
     if (!scrollToPageAfterLoad.current || loading) return;
@@ -288,9 +291,50 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
 
   const navigateViewer = useCallback((direction: -1 | 1) => {
     if (viewerItems.length < 2 || viewerIndex < 0) return;
+    const atEdge = direction === 1 ? viewerIndex === viewerItems.length - 1 : viewerIndex === 0;
+    const canLoadPage = direction === 1 ? hasMore : page > 0;
+    if (atEdge && canLoadPage) {
+      setPendingViewerPage({ direction, page: page + direction });
+      void load(page + direction, true, query);
+      return;
+    }
     const next = viewerItems[(viewerIndex + direction + viewerItems.length) % viewerItems.length];
     openMedia(next.memory, next.media);
-  }, [openMedia, viewerItems, viewerIndex]);
+  }, [hasMore, load, openMedia, page, query, viewerItems, viewerIndex]);
+
+  useEffect(() => {
+    if (pendingViewerPage === null || loading) return;
+    if (page !== pendingViewerPage.page) {
+      setPendingViewerPage(null);
+      return;
+    }
+    if (filteredItems.length === 0) {
+      setPendingViewerPage(null);
+      return;
+    }
+    const nextItems = mode === "gallery"
+      ? filteredItems.flatMap((memory) => memory.media.map((media) => ({ memory, media })))
+      : galleryMedia;
+    const target = pendingViewerPage.direction === 1 ? nextItems[0] : nextItems[nextItems.length - 1];
+    setPendingViewerPage(null);
+    if (target) openMedia(target.memory, target.media);
+  }, [filteredItems, galleryMedia, loading, mode, openMedia, page, pendingViewerPage]);
+
+  useEffect(() => {
+    if (!selected || !slideshowPlaying || viewerItems.length < 2) return;
+    const timer = window.setInterval(() => navigateViewer(1), 5000);
+    return () => window.clearInterval(timer);
+  }, [navigateViewer, selected, slideshowPlaying, viewerItems.length]);
+
+  useEffect(() => {
+    if (!selected) {
+      setSlideshowPlaying(false);
+      return;
+    }
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, [selected]);
 
   function zoomImage(amount: number) {
     setImageZoom((current) => {
@@ -653,7 +697,7 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
               ? asset.posterUrl
               ? <Image alt="" className="memory-cover" height={600} loading="lazy" src={asset.posterUrl} unoptimized width={800} />
               : <VideoThumbnail alt={asset.originalFilename} src={asset.url} />
-            : <Image alt={asset.originalFilename} className="memory-cover" height={900} loading="lazy" src={asset.url} unoptimized width={700} />}
+            : <Image alt={asset.originalFilename} className="memory-cover" height={900} loading="lazy" src={asset.thumbnailUrl ?? asset.url} unoptimized width={700} />}
           {asset.resourceType === "video" && <span className="media-type-badge">VIDEO{asset.duration ? ` · ${Math.floor(asset.duration / 60)}:${String(Math.floor(asset.duration % 60)).padStart(2, "0")}` : ""}</span>}
           {asset.resourceType === "video" && <span className="video-play-mark" aria-hidden="true">▶</span>}
         </button>
@@ -713,13 +757,9 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
       </header>
       <section className="library-main">
         {mode === "gallery" && <section aria-label="Archive profile" className="archive-profile">
-          <div className="profile-banner">
-            {profileVideo && <video aria-label="Looping profile banner video" autoPlay className="profile-banner-video" loop muted playsInline preload="metadata" src={profileVideo.url} />}
-            <div className="profile-banner-shade" />
-            {profileImageUrl
-              ? <Image alt={`${displayName} profile`} className="profile-avatar" height={112} src={profileImageUrl} unoptimized width={112} />
-              : <span aria-hidden="true" className="profile-avatar profile-avatar-fallback">{displayName.trim().charAt(0).toLocaleUpperCase() || "G"}</span>}
-          </div>
+          {profileImageUrl
+            ? <Image alt={`${displayName} profile`} className="profile-avatar" height={88} src={profileImageUrl} unoptimized width={88} />
+            : <span aria-hidden="true" className="profile-avatar profile-avatar-fallback">{displayName.trim().charAt(0).toLocaleUpperCase() || "G"}</span>}
           <div className="profile-summary"><p className="eyebrow">Private personal archive</p><h2>{displayName}</h2><span>{total} {total === 1 ? "memory" : "memories"} kept close</span></div>
         </section>}
         <div className="library-title-row">
@@ -895,6 +935,11 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
                 setEditing(false);
               }} type="button"><X size={20} /></button>
               {selected.media && <div className="viewer-toolbar" aria-label="Viewer controls">
+                <button aria-label="Previous photo or video" disabled={viewerItems.length < 2} onClick={() => navigateViewer(-1)} type="button"><ArrowLeft size={16} /></button>
+                <button aria-label={slideshowPlaying ? "Pause slideshow" : "Start slideshow"} disabled={viewerItems.length < 2} onClick={() => setSlideshowPlaying((playing) => !playing)} type="button">
+                  {slideshowPlaying ? <Pause size={16} /> : <Play size={16} />}
+                </button>
+                <button aria-label="Next photo or video" disabled={viewerItems.length < 2} onClick={() => navigateViewer(1)} type="button"><ArrowRight size={16} /></button>
                 {selected.media.resourceType === "image" ? <>
                   <button aria-label="Zoom out" disabled={imageZoom <= 1} onClick={() => zoomImage(-0.25)} type="button"><Minus size={16} /></button>
                   <span>{Math.round(imageZoom * 100)}%</span>
@@ -906,7 +951,23 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
                 <button aria-label={`Share ${selected.media.originalFilename}`} onClick={() => void shareMedia(selected.memory, selected.media!)} type="button"><Share2 size={16} /></button>
                 <button aria-label="Open fullscreen" onClick={() => void lightboxMediaRef.current?.requestFullscreen?.()} type="button"><Expand size={16} /></button>
               </div>}
-              <div className="lightbox-media" ref={lightboxMediaRef}>
+              <div
+                className="lightbox-media"
+                onTouchStart={(event) => {
+                  const touch = event.touches[0];
+                  viewerTouchStart.current = touch ? { x: touch.clientX, y: touch.clientY } : null;
+                }}
+                onTouchEnd={(event) => {
+                  const start = viewerTouchStart.current;
+                  const touch = event.changedTouches[0];
+                  viewerTouchStart.current = null;
+                  if (!start || !touch || event.changedTouches.length !== 1 || (selected.media?.resourceType === "image" && imageZoom > 1)) return;
+                  const deltaX = touch.clientX - start.x;
+                  const deltaY = touch.clientY - start.y;
+                  if (Math.abs(deltaX) > 56 && Math.abs(deltaX) > Math.abs(deltaY) * 1.2) navigateViewer(deltaX < 0 ? 1 : -1);
+                }}
+                ref={lightboxMediaRef}
+              >
                 {selected.media ? selected.media.resourceType === "video"
                   ? <>
                     <video controls muted={false} playsInline preload="metadata" poster={selected.media.posterUrl} ref={videoRef} src={selected.media.url} style={{ transform: `rotate(${videoRotation}deg)`, ...(videoRotation % 180 ? { width: `${Math.max(1, Math.min(viewerSize.width * videoRatio, viewerSize.height))}px`, maxWidth: "none", maxHeight: "none" } : {}) }} onLoadedMetadata={(event) => {
@@ -933,7 +994,7 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
                     onPointerCancel={onImagePointerUp}
                     onWheel={(event) => { event.preventDefault(); zoomImage(event.deltaY < 0 ? 0.15 : -0.15); }}
                     src={selected.media.url}
-                    style={{ transform: `translate(${imagePan.x}px, ${imagePan.y}px) rotate(${imageRotation}deg) scale(${imageZoom})`, maxWidth: imageRotation % 180 ? "min(82svh, 100%)" : "100%", maxHeight: imageRotation % 180 ? "min(82vw, 86svh)" : "86svh" }}
+                    style={{ transform: `translate(${imagePan.x}px, ${imagePan.y}px) rotate(${imageRotation}deg) scale(${imageZoom})`, maxWidth: imageRotation % 180 ? "min(82svh, 100%)" : "100%" }}
                     unoptimized
                     width={1600}
                   />

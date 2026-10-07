@@ -29,34 +29,10 @@ function parseByteRange(value: string, length: number): ByteRange | null {
 
 function isSafeObjectKey(key: string) {
   const parts = key.split("/");
-  return parts.length === 3 &&
+  return parts.length >= 3 &&
     parts[0] === "memories" &&
     /^[a-f\d]{24}$/i.test(parts[1]) &&
-    Boolean(parts[2]) &&
-    parts[2] !== "." &&
-    parts[2] !== ".." &&
-    /^[a-zA-Z0-9._-]+$/.test(parts[2]);
-}
-
-function logB2MediaError(
-  error: unknown,
-  details: { key: string; range: string | null; contentType: string },
-) {
-  const b2Error = error && typeof error === "object"
-    ? error as { name?: unknown; Code?: unknown; code?: unknown; $metadata?: { httpStatusCode?: unknown } }
-    : undefined;
-  console.error("[media-proxy-b2] Object request failed", {
-    name: typeof b2Error?.name === "string" ? b2Error.name : "UnknownError",
-    ...(typeof b2Error?.$metadata?.httpStatusCode === "number"
-      ? { httpStatus: b2Error.$metadata.httpStatusCode }
-      : {}),
-    ...(typeof b2Error?.Code === "string"
-      ? { code: b2Error.Code }
-      : typeof b2Error?.code === "string"
-        ? { code: b2Error.code }
-        : {}),
-    ...details,
-  });
+    parts.slice(2).every((part) => Boolean(part) && part !== "." && part !== ".." && /^[a-zA-Z0-9._-]+$/.test(part));
 }
 
 async function serveMedia(request: Request, headOnly: boolean) {
@@ -109,8 +85,7 @@ async function serveMedia(request: Request, headOnly: boolean) {
     const object = await getB2Object(key, range);
     if (!object.Body) throw new Error("Backblaze returned an empty media body.");
 
-    const contentType = object.ContentType ?? asset.contentType;
-    headers.set("Content-Type", contentType);
+    headers.set("Content-Type", object.ContentType ?? asset.contentType);
     headers.set("Content-Length", String(object.ContentLength ?? (
       byteRange ? byteRange.end - byteRange.start + 1 : asset.bytes
     )));
@@ -125,12 +100,7 @@ async function serveMedia(request: Request, headOnly: boolean) {
       headers,
     });
   } catch (error) {
-    logB2MediaError(error, {
-      key,
-      range: requestRange,
-      contentType: asset.contentType,
-    });
-    logApiError("media-proxy", error);
+    logApiError("media-proxy-backblaze", error);
     return errorJson("This media could not be loaded right now.", 502);
   }
 }
@@ -139,7 +109,7 @@ export async function GET(request: Request) {
   try {
     return await serveMedia(request, false);
   } catch (error) {
-    logApiError("media-proxy", error);
+    logApiError("media-proxy-backblaze", error);
     return errorJson("This media could not be loaded right now.", 500);
   }
 }
@@ -148,7 +118,7 @@ export async function HEAD(request: Request) {
   try {
     return await serveMedia(request, true);
   } catch (error) {
-    logApiError("media-proxy-head", error);
+    logApiError("media-proxy-backblaze-head", error);
     return errorJson("This media could not be loaded right now.", 500);
   }
 }

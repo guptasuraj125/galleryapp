@@ -2,6 +2,7 @@ import { Types } from "mongoose";
 import { z } from "zod";
 import { getUserSpaceMembership } from "@/src/lib/auth";
 import { deleteB2Object } from "@/src/lib/backblaze";
+import { deleteImageKitObject } from "@/src/lib/imagekit";
 import { errorJson, isSameOrigin, logApiError, successJson } from "@/src/lib/api-response";
 import { getCloudinary, getCloudinaryErrorMessage } from "@/src/lib/cloudinary";
 import { removeEmptyUploadMemories } from "@/src/lib/memory-cleanup";
@@ -67,6 +68,8 @@ export async function DELETE(request: Request) {
         try {
           if (asset.provider === "backblaze") {
             await deleteB2Object(asset.storageKey ?? asset.publicId);
+          } else if (asset.provider === "imagekit") {
+            await deleteImageKitObject(asset.publicId);
           } else {
             cloudinary ??= getCloudinary().cloudinary;
             const result = await cloudinary.uploader.destroy(asset.publicId, {
@@ -87,12 +90,16 @@ export async function DELETE(request: Request) {
           deletedAssets.push({ memoryId: asset.memoryId, originalFilename: asset.originalFilename });
         } catch (error) {
           failures.push(String(asset._id));
-          const message = getCloudinaryErrorMessage(error);
+          const message = error instanceof Error ? error.message : getCloudinaryErrorMessage(error);
           if (asset.provider === "cloudinary" && message.toLowerCase().includes("action is disabled")) {
             cloudinaryActionDisabled = true;
           }
           failureMessages.push(message);
-          console.error("[media-bulk-delete] Cloudinary rejected delete", { mediaId: String(asset._id), message });
+          console.error("[media-bulk-delete] Storage provider rejected delete", {
+            mediaId: String(asset._id),
+            provider: asset.provider,
+            message,
+          });
         }
       }));
       if (cloudinaryActionDisabled) break;
@@ -101,8 +108,8 @@ export async function DELETE(request: Request) {
     if (failures.length > 0 && deletedIds.length === 0) {
       const reason = cloudinaryActionDisabled
         ? "Cloudinary has disabled actions for this account, so the remaining files were not attempted."
-        : failureMessages[0] ?? "Check the Cloudinary account and API key permissions.";
-      return errorJson(`Cloudinary could not delete the selected media. ${reason}`, 502);
+        : failureMessages[0] ?? "Check the storage provider credentials and permissions.";
+      return errorJson(`The storage provider could not delete the selected media. ${reason}`, 502);
     }
     return successJson({ deletedIds, failedIds: failures, failureMessages, deletedCount: deletedIds.length, failedCount: failures.length });
   } catch (error) {

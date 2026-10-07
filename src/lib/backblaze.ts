@@ -1,5 +1,6 @@
 import "server-only";
 import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { Readable } from "node:stream";
 
 let client: S3Client | undefined;
 
@@ -10,8 +11,9 @@ export function getBackblaze() {
   const endpoint = process.env.B2_ENDPOINT;
   const region = process.env.B2_REGION;
   if (!accessKeyId || !secretAccessKey || !bucketName || !endpoint || !region) {
-    throw new Error("Backblaze B2 is not configured. Set the B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY, B2_BUCKET_NAME, B2_ENDPOINT, and B2_REGION variables.");
+    throw new Error("Backblaze B2 legacy storage is not configured.");
   }
+
   client ??= new S3Client({
     region,
     endpoint,
@@ -21,17 +23,6 @@ export function getBackblaze() {
     credentials: { accessKeyId, secretAccessKey },
   });
   return { client, bucketName };
-}
-
-export function makeB2ObjectKey(spaceId: string, filename: string) {
-  const safeName = filename
-    .split(/[\\/]/).pop()!
-    .normalize("NFKC")
-    .replace(/[^a-zA-Z0-9._-]+/g, "-")
-    .replace(/\.{2,}/g, ".")
-    .replace(/^\.+/, "")
-    .slice(0, 160) || "upload";
-  return `memories/${spaceId}/${crypto.randomUUID()}-${safeName}`;
 }
 
 export async function getB2Object(key: string, range?: string) {
@@ -57,9 +48,13 @@ export async function deleteB2Object(key: string) {
   await client.send(new DeleteObjectCommand({ Bucket: bucketName, Key: key }));
 }
 
-export async function createB2Object(key: string, contentType: string, contentLength: number, body: NonNullable<Request["body"]>) {
+export async function createB2Object(
+  key: string,
+  contentType: string,
+  contentLength: number,
+  body: ReadableStream<Uint8Array>,
+) {
   const { client, bucketName } = getBackblaze();
-  const { Readable } = await import("node:stream");
   const stream = Readable.fromWeb(body as import("node:stream/web").ReadableStream);
   return client.send(new PutObjectCommand({
     Bucket: bucketName,

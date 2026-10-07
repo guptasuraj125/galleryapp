@@ -5,7 +5,7 @@ export interface MediaAssetRecord {
   spaceId: Types.ObjectId;
   uploadedBy: Types.ObjectId;
   memoryId?: Types.ObjectId;
-  provider: "cloudinary" | "backblaze";
+  provider: "cloudinary" | "backblaze" | "imagekit";
   storageKey?: string;
   publicId: string;
   resourceType: "image" | "video";
@@ -27,7 +27,7 @@ const mediaAssetSchema = new Schema<MediaAssetRecord>(
     spaceId: { type: Schema.Types.ObjectId, ref: "PrivateSpace", required: true },
     uploadedBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
     memoryId: { type: Schema.Types.ObjectId, ref: "Memory" },
-    provider: { type: String, enum: ["cloudinary", "backblaze"], default: "cloudinary", required: true },
+    provider: { type: String, enum: ["cloudinary", "backblaze", "imagekit"], default: "cloudinary", required: true },
     publicId: { type: String, required: true, trim: true, maxlength: 255 },
     storageKey: { type: String, trim: true, maxlength: 1024 },
     resourceType: { type: String, enum: ["image", "video"], required: true },

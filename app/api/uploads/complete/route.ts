@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import { z } from "zod";
 import { verifyB2Object } from "@/src/lib/backblaze";
+import { verifyImageKitObject } from "@/src/lib/imagekit";
 import { getCurrentUser } from "@/src/lib/auth";
 import { getCloudinary } from "@/src/lib/cloudinary";
 import { connectToDatabase } from "@/src/lib/mongodb";
@@ -75,22 +76,39 @@ async function completeUpload(request: Request) {
   let width: number | undefined;
   let height: number | undefined;
   let duration: number | undefined;
+  let imageKitFileId: string | undefined;
+  let imageKitFilePath: string | undefined;
   const allowedFormats =
     item.resourceType === "image"
       ? ["jpg", "jpeg", "png", "webp", "gif", "avif", "heic", "heif"]
       : ["mp4", "mov", "webm"];
-  if (item.provider === "backblaze") {
+  if (item.provider === "imagekit") {
     try {
-      const object = await verifyB2Object(item.publicId);
-      bytes = object.ContentLength;
-      if (object.ContentType !== item.contentType || bytes !== item.expectedBytes) {
-        return errorJson("Backblaze B2 received a file with unexpected size or content type.", 422);
+      if (!item.publicId || item.status !== "processing") {
+        return errorJson("ImageKit did not identify the uploaded file.", 400);
+      }
+      const object = await verifyImageKitObject(item.publicId);
+      imageKitFileId = object.fileId;
+      imageKitFilePath = object.filePath;
+      bytes = object.size;
+      width = object.width;
+      height = object.height;
+      duration = object.duration;
+      const normalizedPath = object.filePath?.replace(/^\/+/, "");
+      if (
+        object.fileId !== item.publicId ||
+        object.mime !== item.contentType ||
+        object.size !== item.expectedBytes ||
+        !item.storageKey ||
+        normalizedPath !== item.storageKey
+      ) {
+        return errorJson("ImageKit received an unexpected asset or content type.", 422);
       }
     } catch (error) {
-      logApiError("upload-complete-b2-verify", error);
-      return errorJson("Backblaze B2 could not verify the uploaded object. Please retry.", 502);
+      logApiError("upload-complete-imagekit-verify", error);
+      return errorJson("ImageKit could not verify the uploaded object. Please retry.", 502);
     }
-  } else {
+  } else if (item.provider === "cloudinary") {
     let cloudinary;
     try {
       cloudinary = getCloudinary().cloudinary;
@@ -115,6 +133,17 @@ async function completeUpload(request: Request) {
     duration = resource.duration;
     if (resource.public_id !== item.publicId || resource.resource_type !== item.resourceType || resource.type !== "authenticated") {
       format = undefined;
+    }
+  } else {
+    try {
+      const object = await verifyB2Object(item.storageKey ?? item.publicId);
+      bytes = object.ContentLength;
+      if (object.ContentType !== item.contentType || bytes !== item.expectedBytes) {
+        return errorJson("Backblaze received a file with unexpected size or content type.", 422);
+      }
+    } catch (error) {
+      logApiError("upload-complete-backblaze-verify", error);
+      return errorJson("Backblaze could not verify the uploaded object. Please retry.", 502);
     }
   }
   if (
@@ -155,7 +184,7 @@ async function completeUpload(request: Request) {
 
       let asset = await MediaAsset.findOne({
         spaceId: job.spaceId,
-        publicId: item.publicId,
+        publicId: imageKitFileId ?? item.publicId,
       }).session(databaseSession);
       if (!asset) {
         [asset] = await MediaAsset.create(
@@ -163,8 +192,8 @@ async function completeUpload(request: Request) {
             spaceId: job.spaceId,
             uploadedBy: user._id,
             provider: item.provider,
-            publicId: item.publicId,
-            ...(item.provider === "backblaze" ? { storageKey: item.publicId } : {}),
+            publicId: imageKitFileId ?? item.publicId,
+            ...(imageKitFilePath ? { storageKey: imageKitFilePath } : item.storageKey ? { storageKey: item.storageKey } : {}),
             resourceType: item.resourceType,
             format,
             bytes,
@@ -194,6 +223,8 @@ async function completeUpload(request: Request) {
       }
 
       currentItem.mediaAssetId = asset._id;
+      if (imageKitFileId) currentItem.publicId = imageKitFileId;
+      if (imageKitFilePath) currentItem.storageKey = imageKitFilePath;
       currentItem.status = "completed";
       currentItem.errorMessage = undefined;
       await currentItem.save({ session: databaseSession });
