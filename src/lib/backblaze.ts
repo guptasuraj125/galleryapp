@@ -1,6 +1,5 @@
 import "server-only";
-import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { DeleteObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 
 let client: S3Client | undefined;
 
@@ -18,11 +17,9 @@ export function getBackblaze() {
     endpoint,
     forcePathStyle: true,
     credentials: { accessKeyId, secretAccessKey },
-    // AWS SDK v3 enables newer S3 checksum behavior by default. Backblaze
-    // B2 is S3-compatible but this response-checksum mode can produce
-    // x-amz-checksum-mode=ENABLED on presigned GET URLs. A browser <img>
-    // or <video> request cannot provide the matching x-amz header, so B2
-    // rejects the URL with 403. Only apply checksums when required.
+    // Backblaze B2 is S3-compatible but browsers cannot provide custom
+    // checksum headers on <img>/<video> requests. Only calculate/validate
+    // checksums when the operation explicitly requires them.
     requestChecksumCalculation: "WHEN_REQUIRED",
     responseChecksumValidation: "WHEN_REQUIRED",
   });
@@ -40,17 +37,13 @@ export function makeB2ObjectKey(spaceId: string, filename: string) {
   return `memories/${spaceId}/${crypto.randomUUID()}-${safeName}`;
 }
 
-export async function createB2DownloadUrl(key: string, contentType: string, _filename: string) {
-  const { client, bucketName } = getBackblaze();
-
-  // Backblaze B2's S3 GetObject API does not support the AWS
-  // response-content-disposition override. Keep the presigned request
-  // limited to parameters B2 documents as supported.
-  return getSignedUrl(client, new GetObjectCommand({
-    Bucket: bucketName,
-    Key: key,
-    ResponseContentType: contentType,
-  }), { expiresIn: 60 * 60 });
+/**
+ * Return an authenticated same-origin URL instead of a direct B2 presigned URL.
+ * This avoids B2's S3-compatible checksum/signature incompatibilities with
+ * browser <img>/<video> requests and lets the proxy handle HTTP Range requests.
+ */
+export async function createB2DownloadUrl(key: string, _contentType: string, _filename: string) {
+  return `/api/media/content?key=${encodeURIComponent(key)}`;
 }
 
 export async function verifyB2Object(key: string) {
