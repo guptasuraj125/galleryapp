@@ -48,7 +48,7 @@ export function buildImageKitUrl(
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
 
   const cleanPath = trimmed.replace(/^\/+/, "");
-  const src = cleanPath.startsWith("/") ? cleanPath : `/${cleanPath}`;
+  const src = `/${cleanPath}`;
   if (variant === "thumbnail" && resourceType === "image") {
     return client.helper.buildSrc({
       urlEndpoint,
@@ -79,6 +79,24 @@ export function buildImageKitUrl(
 export async function getImageKitObjectMetadata(fileId: string) {
   const { client } = getImageKit();
   return client.files.get(fileId);
+}
+
+/**
+ * Older ImageKit uploads may have been created as unpublished/draft assets.
+ * Private unpublished assets return 404 from the delivery CDN even when the
+ * signed URL is valid. Publish them once before generating delivery URLs.
+ */
+export async function ensureImageKitObjectPublished(fileId: string) {
+  const { client } = getImageKit();
+  const file = await client.files.get(fileId);
+  if (file.isPublished === false) {
+    await client.files.update(fileId, {
+      publish: {
+        isPublished: true,
+        includeFileVersions: true,
+      },
+    });
+  }
 }
 
 export async function verifyImageKitObject(fileId: string) {
