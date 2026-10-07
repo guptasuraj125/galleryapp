@@ -96,7 +96,7 @@ async function completeUpload(request: Request) {
       duration = object.duration;
       const normalizedPath = object.filePath?.replace(/^\/+/, "");
       const normalizedStorageKey = item.storageKey?.replace(/^\/+/, "");
-      const expectedFileType = item.resourceType === "image" ? "image" : "non-image";
+      const expectedFileType = item.resourceType === "image" ? "image" : "video";
       if (
         object.fileId !== item.publicId ||
         object.fileType !== expectedFileType ||
