@@ -1,5 +1,6 @@
 import "server-only";
-import { DeleteObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 let client: S3Client | undefined;
 
@@ -17,11 +18,6 @@ export function getBackblaze() {
     endpoint,
     forcePathStyle: true,
     credentials: { accessKeyId, secretAccessKey },
-    // Backblaze B2 is S3-compatible but browsers cannot provide custom
-    // checksum headers on <img>/<video> requests. Only calculate/validate
-    // checksums when the operation explicitly requires them.
-    requestChecksumCalculation: "WHEN_REQUIRED",
-    responseChecksumValidation: "WHEN_REQUIRED",
   });
   return { client, bucketName };
 }
@@ -37,13 +33,15 @@ export function makeB2ObjectKey(spaceId: string, filename: string) {
   return `memories/${spaceId}/${crypto.randomUUID()}-${safeName}`;
 }
 
-/**
- * Return an authenticated same-origin URL instead of a direct B2 presigned URL.
- * This avoids B2's S3-compatible checksum/signature incompatibilities with
- * browser <img>/<video> requests and lets the proxy handle HTTP Range requests.
- */
-export async function createB2DownloadUrl(key: string, _contentType: string, _filename: string) {
-  return `/api/media/content?key=${encodeURIComponent(key)}`;
+export async function createB2DownloadUrl(key: string, contentType: string, filename: string) {
+  const { client, bucketName } = getBackblaze();
+  const safeDispositionName = filename.replace(/[\r\n"\\]/g, "_").slice(0, 200);
+  return getSignedUrl(client, new GetObjectCommand({
+    Bucket: bucketName,
+    Key: key,
+    ResponseContentType: contentType,
+    ResponseContentDisposition: `inline; filename="${safeDispositionName}"`,
+  }), { expiresIn: 60 * 60 * 24 * 7 });
 }
 
 export async function verifyB2Object(key: string) {
