@@ -37,7 +37,7 @@ export function makeImageKitObjectKey(spaceId: string, filename: string, folderP
   return `memories/${spaceId}${cleanFolderPath ? `/${cleanFolderPath}` : ""}/${randomUUID()}-${safeName}`;
 }
 
-export function buildImageKitUrl(
+function buildImageKitSignedUrl(
   filePath: string,
   resourceType: "image" | "video" = "image",
   variant: "thumbnail" | "poster" | "original" = "original",
@@ -48,7 +48,7 @@ export function buildImageKitUrl(
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
 
   const cleanPath = trimmed.replace(/^\/+/, "");
-  const src = cleanPath.startsWith("/") ? cleanPath : `/${cleanPath}`;
+  const src = `/${cleanPath}`;
   if (variant === "thumbnail" && resourceType === "image") {
     return client.helper.buildSrc({
       urlEndpoint,
@@ -85,9 +85,57 @@ export function buildImageKitUrl(
   return client.helper.buildSrc({ urlEndpoint, src, signed: true, expiresIn: 3600 });
 }
 
+export function buildImageKitUrl(
+  filePath: string,
+  resourceType: "image" | "video" = "image",
+  variant: "thumbnail" | "poster" | "original" = "original",
+) {
+  const trimmed = filePath.trim();
+  if (!trimmed) return "/api/media/imagekit";
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  const params = new URLSearchParams({
+    path: trimmed.replace(/^\/+/, ""),
+    type: resourceType,
+    variant,
+  });
+  return `/api/media/imagekit?${params.toString()}`;
+}
+
 export async function getImageKitObjectMetadata(fileId: string) {
   const { client } = getImageKit();
   return client.files.get(fileId);
+}
+
+/** Publish legacy draft assets and wait until ImageKit reports them as published. */
+export async function ensureImageKitObjectPublished(fileId: string) {
+  const { client } = getImageKit();
+  let file = await client.files.get(fileId);
+  if (file.isPublished !== false) return file;
+
+  await client.files.update(fileId, {
+    publish: {
+      isPublished: true,
+      includeFileVersions: true,
+    },
+  });
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    file = await client.files.get(fileId);
+    if (file.isPublished !== false) return file;
+  }
+
+  throw new Error("ImageKit did not finish publishing the asset in time.");
+}
+
+export async function getImageKitSignedDeliveryUrl(
+  fileId: string,
+  filePath: string,
+  resourceType: "image" | "video",
+  variant: "thumbnail" | "poster" | "original",
+) {
+  const file = await ensureImageKitObjectPublished(fileId);
+  return buildImageKitSignedUrl(file.filePath ?? filePath, resourceType, variant);
 }
 
 export async function verifyImageKitObject(fileId: string) {
