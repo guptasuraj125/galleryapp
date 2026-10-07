@@ -12,6 +12,7 @@ import { connectToDatabase } from "@/src/lib/mongodb";
 import { Location } from "@/src/models/Location";
 import { MediaAsset } from "@/src/models/MediaAsset";
 import { Memory, type MemoryRecord } from "@/src/models/Memory";
+import { PrivateSpace } from "@/src/models/PrivateSpace";
 import { Tag } from "@/src/models/Tag";
 
 export const runtime = "nodejs";
@@ -81,6 +82,39 @@ export async function GET(request: Request) {
     const auth = await getUserSpaceMembership();
     if (!auth) return errorJson("Sign in to view your memories.", 401);
     await connectToDatabase();
+    const space = await PrivateSpace.findById(auth.membership.spaceId)
+      .select("profileBannerMediaAssetId")
+      .lean();
+    const bannerAsset = space?.profileBannerMediaAssetId
+      ? await MediaAsset.findOne({
+        _id: space.profileBannerMediaAssetId,
+        spaceId: auth.membership.spaceId,
+        resourceType: "video",
+        status: "ready",
+      }).lean()
+      : null;
+    let profileBanner: { id: string; url: string; originalFilename: string } | null = null;
+    if (bannerAsset) {
+      let bannerUrl: string;
+      if (bannerAsset.provider === "imagekit") {
+        bannerUrl = buildImageKitUrl(bannerAsset.storageKey ?? bannerAsset.publicId, "video");
+      } else if (bannerAsset.provider === "backblaze") {
+        const key = bannerAsset.storageKey ?? bannerAsset.publicId;
+        bannerUrl = `/api/media/content?${new URLSearchParams({ key }).toString()}`;
+      } else {
+        bannerUrl = getAuthenticatedDeliveryUrls(
+          bannerAsset.publicId,
+          "video",
+          bannerAsset.format,
+          bannerAsset.version,
+        ).assetUrl;
+      }
+      profileBanner = {
+        id: String(bannerAsset._id),
+        url: bannerUrl,
+        originalFilename: bannerAsset.originalFilename,
+      };
+    }
     try {
       await removeMissingCloudinaryAssets(auth.membership.spaceId);
     } catch (syncError) {
@@ -265,7 +299,7 @@ export async function GET(request: Request) {
           url: buildImageKitUrl(asset.storageKey ?? asset.publicId, asset.resourceType),
           ...(asset.resourceType === "image"
             ? { thumbnailUrl: buildImageKitUrl(asset.storageKey ?? asset.publicId, "image", "thumbnail") }
-            : { posterUrl: buildImageKitUrl(asset.storageKey ?? asset.publicId, "video", "poster") }),
+            : {}),
         });
       } else {
         const delivery = getAuthenticatedDeliveryUrls(
@@ -294,6 +328,7 @@ export async function GET(request: Request) {
         if (!delivery) return [];
         return [{
           id: String(asset._id),
+          provider: asset.provider,
           resourceType: asset.resourceType,
           format: asset.format,
           bytes: asset.bytes,
@@ -308,7 +343,7 @@ export async function GET(request: Request) {
         }];
       }),
     }));
-    return successJson({ items, page, limit, total, totalPages, hasMore: page + 1 < totalPages });
+    return successJson({ items, profileBanner, page, limit, total, totalPages, hasMore: page + 1 < totalPages });
   } catch (error) {
     logApiError("memories-list", error);
     return errorJson("Your memories could not be loaded right now.", 500);

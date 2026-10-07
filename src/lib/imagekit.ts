@@ -73,6 +73,15 @@ export function buildImageKitUrl(
       transformation: [{ raw: "so-0,w-800,h-450,fo-auto" }],
     });
   }
+  if (resourceType === "video") {
+    return client.helper.buildSrc({
+      urlEndpoint,
+      src,
+      signed: true,
+      expiresIn: 3600,
+      transformation: [{ format: "mp4", videoCodec: "h264", audioCodec: "aac" }],
+    });
+  }
   return client.helper.buildSrc({ urlEndpoint, src, signed: true, expiresIn: 3600 });
 }
 

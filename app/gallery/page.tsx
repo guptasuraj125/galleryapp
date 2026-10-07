@@ -19,5 +19,11 @@ export default async function GalleryPage() {
     ? await MediaAsset.find({ spaceId: membership.spaceId, status: "ready" }).select("_id createdAt").lean()
     : [];
   const mediaCreatedAt = Object.fromEntries(timestamps.map((asset) => [String(asset._id), asset.createdAt.toISOString()]));
-  return <MemoryBrowser displayName={user.displayName} mediaCreatedAt={mediaCreatedAt} mode="gallery" />;
+  return (
+    <MemoryBrowser
+      displayName={user.displayName}
+      mediaCreatedAt={mediaCreatedAt}
+      mode="gallery"
+    />
+  );
 }

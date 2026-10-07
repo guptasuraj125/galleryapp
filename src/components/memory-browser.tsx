@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { ArrowLeft, ArrowRight, Download, Expand, Heart, MapPin, Minus, Pause, Play, Plus, RotateCcw, RotateCw, Search, Share2, Trash2, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Download, Expand, Heart, MapPin, Minus, Plus, RotateCcw, RotateCw, Search, Share2, Trash2, X } from "lucide-react";
 import { readJson } from "@/src/lib/api-response";
 import { ThemeToggle } from "@/src/components/theme-toggle";
+import { ProfileBannerVideo } from "@/src/components/profile-banner-video";
 
 type Mode = "gallery" | "videos" | "timeline" | "places" | "favorites" | "on-this-day" | "search";
 type DeleteConfirmation = {
@@ -20,6 +22,7 @@ type GallerySort = "newest" | "oldest" | "name-asc" | "name-desc";
 
 interface MemoryMedia {
   id: string;
+  provider: "imagekit" | "backblaze" | "cloudinary";
   resourceType: "image" | "video";
   format: string;
   bytes: number;
@@ -32,6 +35,12 @@ interface MemoryMedia {
   thumbnailUrl?: string;
   posterUrl?: string;
   createdAt?: string;
+}
+
+interface ProfileBanner {
+  id: string;
+  url: string;
+  originalFilename: string;
 }
 
 interface MemoryItem {
@@ -48,6 +57,7 @@ interface MemoryItem {
 
 interface MemoryResponse {
   items: MemoryItem[];
+  profileBanner?: ProfileBanner | null;
   page: number;
   limit: number;
   total: number;
@@ -88,7 +98,43 @@ function getModeQuery(mode: Mode, query: string) {
   return params;
 }
 
-function VideoThumbnail({ src, alt }: { src: string; alt: string }) {
+function MediaImage(props: { src: string; alt: string; className: string; width?: number; height?: number }) {
+  return <MediaImageContent key={props.src} {...props} />;
+}
+
+function MediaImageContent({ src, alt, className, width = 1200, height = 900 }: { src: string; alt: string; className: string; width?: number; height?: number }) {
+  const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [aspectRatio, setAspectRatio] = useState<number>();
+
+  return (
+    <span className={`media-image-frame${loaded ? " is-loaded" : ""}`} style={{ aspectRatio: aspectRatio ?? `${width} / ${height}` }}>
+      {!loaded && !failed && <span aria-hidden="true" className="media-image-skeleton" />}
+      {failed
+        ? <span aria-label={`${alt} preview unavailable`} className="media-load-error" role="img">Preview unavailable</span>
+        : <Image
+          alt={alt}
+          className={className}
+          height={height}
+          loading="lazy"
+          onError={() => setFailed(true)}
+          onLoad={(event) => {
+            const image = event.currentTarget;
+            if (image.naturalWidth && image.naturalHeight) {
+              setAspectRatio(image.naturalWidth / image.naturalHeight);
+            }
+            setLoaded(true);
+          }}
+          src={src}
+          style={aspectRatio ? { aspectRatio } : undefined}
+          unoptimized
+          width={width}
+        />}
+    </span>
+  );
+}
+
+function VideoThumbnail({ src, alt, width, height }: { src: string; alt: string; width?: number; height?: number }) {
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
   const [nearViewport, setNearViewport] = useState(false);
@@ -106,8 +152,8 @@ function VideoThumbnail({ src, alt }: { src: string; alt: string }) {
     return () => observer.disconnect();
   }, []);
   return (
-    <div className="video-thumbnail" ref={container}>
-      {!ready && <span aria-hidden="true" className="memory-video-placeholder">{failed ? "VIDEO" : "Loading preview…"}</span>}
+    <div className="video-thumbnail" ref={container} style={width && height ? { aspectRatio: `${width} / ${height}` } : undefined}>
+      {!ready && <span aria-hidden="true" className="memory-video-placeholder">{failed ? "Video preview unavailable" : "Loading preview…"}</span>}
       {nearViewport && <video
         aria-label={`Video thumbnail for ${alt}`}
         className={ready ? "video-thumbnail-frame is-ready" : "video-thumbnail-frame"}
@@ -116,6 +162,9 @@ function VideoThumbnail({ src, alt }: { src: string; alt: string }) {
         onLoadedData={() => setReady(true)}
         onLoadedMetadata={(event) => {
           const video = event.currentTarget;
+          if (video.videoWidth && video.videoHeight) {
+            if (video.parentElement) video.parentElement.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+          }
           if (Number.isFinite(video.duration) && video.duration > 0) video.currentTime = Math.min(0.12, video.duration / 2);
         }}
         onSeeked={() => setReady(true)}
@@ -135,10 +184,10 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
   const [hasMore, setHasMore] = useState(false);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
+  const [profileBanner, setProfileBanner] = useState<ProfileBanner | null>(null);
   const [page, setPage] = useState(0);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<{ memory: MemoryItem; media?: MemoryMedia } | null>(null);
-  const [pendingViewerPage, setPendingViewerPage] = useState<{ direction: 1 | -1; page: number } | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -151,11 +200,12 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [notice, setNotice] = useState("");
   const [deleteConfirmation, setDeleteConfirmation] = useState<DeleteConfirmation | null>(null);
+  const deleteCancelButton = useRef<HTMLButtonElement>(null);
+  const deleteReturnFocus = useRef<HTMLElement | null>(null);
   const [imageZoom, setImageZoom] = useState(1);
   const [imagePan, setImagePan] = useState({ x: 0, y: 0 });
   const [imageRotation, setImageRotation] = useState(0);
   const [videoRotation, setVideoRotation] = useState(0);
-  const [slideshowPlaying, setSlideshowPlaying] = useState(false);
   const [viewerSize, setViewerSize] = useState({ width: 0, height: 0 });
   const [videoRatio, setVideoRatio] = useState(16 / 9);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
@@ -166,6 +216,34 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
   const galleryTopRef = useRef<HTMLDivElement>(null);
   const scrollToPageAfterLoad = useRef(false);
   const sharedMediaOpened = useRef(false);
+
+  function openDeleteConfirmation(confirmation: DeleteConfirmation) {
+    deleteReturnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setDeleteConfirmation(confirmation);
+  }
+
+  useEffect(() => {
+    if (!deleteConfirmation) {
+      deleteReturnFocus.current?.focus();
+      deleteReturnFocus.current = null;
+      return;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    deleteCancelButton.current?.focus();
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setDeleteConfirmation(null);
+    }
+    window.addEventListener("keydown", closeOnEscape, true);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape, true);
+    };
+  }, [deleteConfirmation]);
 
   const load = useCallback(async (nextPage = 0, replace = true, search = "") => {
     if (replace) setLoading(true);
@@ -184,8 +262,11 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
       setHasMore(result.hasMore);
       setTotal(result.total);
       setTotalPages(result.totalPages ?? Math.ceil(result.total / PAGE_SIZE));
+      if (replace && mode === "gallery") setProfileBanner(result.profileBanner ?? null);
+      return result;
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Your memories could not be loaded.");
+      return undefined;
     } finally {
       setLoading(false);
     }
@@ -276,6 +357,10 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
     setVideoRatio(16 / 9);
     setSelected({ memory, media });
   }, []);
+  const closeViewer = useCallback(() => {
+    setSelected(null);
+    setEditing(false);
+  }, []);
 
   useEffect(() => {
     if (mode !== "gallery" || loading || sharedMediaOpened.current) return;
@@ -290,47 +375,40 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
   }, [mode, loading, visibleItems, openMedia]);
 
   const navigateViewer = useCallback((direction: -1 | 1) => {
-    if (viewerItems.length < 2 || viewerIndex < 0) return;
+    if (viewerIndex < 0) return;
     const atEdge = direction === 1 ? viewerIndex === viewerItems.length - 1 : viewerIndex === 0;
     const canLoadPage = direction === 1 ? hasMore : page > 0;
     if (atEdge && canLoadPage) {
-      setPendingViewerPage({ direction, page: page + direction });
-      void load(page + direction, true, query);
+      void load(page + direction, true, query).then((result) => {
+        if (!result) return;
+        const nextItems = result.items.flatMap((memory) => memory.media.map((media) => ({
+          memory: { ...memory, media: [media] },
+          media,
+        })));
+        if (mode === "gallery") {
+          const sortName = ({ media, memory }: typeof nextItems[number]) => media.originalFilename || memory.title;
+          const sortTime = ({ media, memory }: typeof nextItems[number]) =>
+            Date.parse(mediaCreatedAt[media.id] ?? media.createdAt ?? memory.occurredAt);
+          nextItems.sort((a, b) => {
+            if (gallerySort === "name-asc") return sortName(a).localeCompare(sortName(b), undefined, { sensitivity: "base" });
+            if (gallerySort === "name-desc") return sortName(b).localeCompare(sortName(a), undefined, { sensitivity: "base" });
+            const difference = sortTime(b) - sortTime(a);
+            return gallerySort === "oldest" ? -difference : difference;
+          });
+        }
+        const target = direction === 1 ? nextItems[0] : nextItems[nextItems.length - 1];
+        if (target) openMedia(target.memory, target.media);
+      });
       return;
     }
-    const next = viewerItems[(viewerIndex + direction + viewerItems.length) % viewerItems.length];
+    const nextIndex = viewerIndex + direction;
+    const next = viewerItems[nextIndex];
+    if (!next) return;
     openMedia(next.memory, next.media);
-  }, [hasMore, load, openMedia, page, query, viewerItems, viewerIndex]);
+  }, [gallerySort, hasMore, load, mediaCreatedAt, mode, openMedia, page, query, viewerItems, viewerIndex]);
 
   useEffect(() => {
-    if (pendingViewerPage === null || loading) return;
-    if (page !== pendingViewerPage.page) {
-      setPendingViewerPage(null);
-      return;
-    }
-    if (filteredItems.length === 0) {
-      setPendingViewerPage(null);
-      return;
-    }
-    const nextItems = mode === "gallery"
-      ? filteredItems.flatMap((memory) => memory.media.map((media) => ({ memory, media })))
-      : galleryMedia;
-    const target = pendingViewerPage.direction === 1 ? nextItems[0] : nextItems[nextItems.length - 1];
-    setPendingViewerPage(null);
-    if (target) openMedia(target.memory, target.media);
-  }, [filteredItems, galleryMedia, loading, mode, openMedia, page, pendingViewerPage]);
-
-  useEffect(() => {
-    if (!selected || !slideshowPlaying || viewerItems.length < 2) return;
-    const timer = window.setInterval(() => navigateViewer(1), 5000);
-    return () => window.clearInterval(timer);
-  }, [navigateViewer, selected, slideshowPlaying, viewerItems.length]);
-
-  useEffect(() => {
-    if (!selected) {
-      setSlideshowPlaying(false);
-      return;
-    }
+    if (!selected) return;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = previousOverflow; };
@@ -438,7 +516,7 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
     const message = allMediaSelected
       ? "Delete every image and video you are allowed to manage in this space? This removes them from the archive and Cloudinary."
       : `Delete ${ids.length} selected ${ids.length === 1 ? "file" : "files"}? This removes them from the archive and Cloudinary.`;
-    setDeleteConfirmation({
+    openDeleteConfirmation({
       title: allMediaSelected ? "Delete all images and videos?" : "Delete selected files?",
       description: message,
       confirmLabel: allMediaSelected ? "Delete all media" : `Delete ${ids.length} ${ids.length === 1 ? "file" : "files"}`,
@@ -556,7 +634,7 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
   }
 
   function deleteMemory(memory: MemoryItem) {
-    setDeleteConfirmation({
+    openDeleteConfirmation({
       title: "Remove this memory?",
       description: `“${memory.title}” will be removed from this space.`,
       confirmLabel: "Remove memory",
@@ -570,8 +648,7 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
   async function deleteMemoryConfirmed(memory: MemoryItem) {
     try {
       await readJson(await fetch(`/api/memories/${memory.id}`, { method: "DELETE" }));
-      setSelected(null);
-      setEditing(false);
+      closeViewer();
       await load(page, true, query);
     } catch (deleteError) {
       setNotice(deleteError instanceof Error ? deleteError.message : "This memory could not be deleted.");
@@ -581,7 +658,7 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
   function deleteMedia() {
     if (!selected?.media) return;
     const { memory, media } = selected;
-    setDeleteConfirmation({
+    openDeleteConfirmation({
       title: "Remove this file?",
       description: `${media.originalFilename} will be removed from this space and Cloudinary.`,
       confirmLabel: "Remove file",
@@ -604,7 +681,7 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
       if (remainingMedia.length > 0) {
         openMedia({ ...memory, media: remainingMedia }, remainingMedia[0]);
       } else {
-        setSelected(null);
+        closeViewer();
       }
       await load(page, true, query);
       setNotice("The file was removed from this space.");
@@ -636,14 +713,20 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
     if (!selected) return;
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        setSelected(null);
-        setEditing(false);
-      } else if (event.key === "ArrowLeft") navigateViewer(-1);
-      else if (event.key === "ArrowRight") navigateViewer(1);
+        closeViewer();
+      } else if (event.target instanceof HTMLElement && event.target.closest("input, textarea, select, [contenteditable='true']")) {
+        return;
+      } else if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        navigateViewer(-1);
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        navigateViewer(1);
+      }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selected, navigateViewer]);
+  }, [selected, navigateViewer, closeViewer]);
 
   function renderMemory(memory: MemoryItem) {
     const media = mode === "videos" ? memory.media.filter((item) => item.resourceType === "video") : memory.media;
@@ -694,10 +777,10 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
           type="button"
         >
           {asset.resourceType === "video"
-              ? asset.posterUrl
-              ? <Image alt="" className="memory-cover" height={600} loading="lazy" src={asset.posterUrl} unoptimized width={800} />
-              : <VideoThumbnail alt={asset.originalFilename} src={asset.url} />
-            : <Image alt={asset.originalFilename} className="memory-cover" height={900} loading="lazy" src={asset.thumbnailUrl ?? asset.url} unoptimized width={700} />}
+              ? asset.provider === "cloudinary" && asset.posterUrl
+              ? <MediaImage alt="" className="memory-cover" height={asset.height} src={asset.posterUrl} width={asset.width} />
+              : <VideoThumbnail alt={asset.originalFilename} height={asset.height} src={asset.url} width={asset.width} />
+            : <MediaImage alt={asset.originalFilename} className="memory-cover" height={asset.height} src={asset.thumbnailUrl ?? asset.url} width={asset.width} />}
           {asset.resourceType === "video" && <span className="media-type-badge">VIDEO{asset.duration ? ` · ${Math.floor(asset.duration / 60)}:${String(Math.floor(asset.duration % 60)).padStart(2, "0")}` : ""}</span>}
           {asset.resourceType === "video" && <span className="video-play-mark" aria-hidden="true">▶</span>}
         </button>
@@ -757,10 +840,16 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
       </header>
       <section className="library-main">
         {mode === "gallery" && <section aria-label="Archive profile" className="archive-profile">
-          {profileImageUrl
-            ? <Image alt={`${displayName} profile`} className="profile-avatar" height={88} src={profileImageUrl} unoptimized width={88} />
-            : <span aria-hidden="true" className="profile-avatar profile-avatar-fallback">{displayName.trim().charAt(0).toLocaleUpperCase() || "G"}</span>}
-          <div className="profile-summary"><p className="eyebrow">Private personal archive</p><h2>{displayName}</h2><span>{total} {total === 1 ? "memory" : "memories"} kept close</span></div>
+          <ProfileBannerVideo
+            banner={profileBanner}
+            displayName={displayName}
+          />
+          <div className="archive-profile-identity">
+            {profileImageUrl
+              ? <Image alt={`${displayName} profile`} className="profile-avatar" height={88} src={profileImageUrl} unoptimized width={88} />
+              : <span aria-hidden="true" className="profile-avatar profile-avatar-fallback">{displayName.trim().charAt(0).toLocaleUpperCase() || "G"}</span>}
+            <div className="profile-summary"><p className="eyebrow">Private personal archive</p><h2>{displayName}</h2><span>{total} {total === 1 ? "memory" : "memories"} kept close</span></div>
+          </div>
         </section>}
         <div className="library-title-row">
           <div>
@@ -913,8 +1002,7 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
             initial={{ opacity: 0 }}
             onClick={(event) => {
               if (event.target === event.currentTarget) {
-                setSelected(null);
-                setEditing(false);
+                closeViewer();
               }
             }}
             role="presentation"
@@ -930,16 +1018,26 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
               role="dialog"
               transition={{ duration: reducedMotion ? 0 : 0.2 }}
             >
-              <button className="lightbox-close" aria-label="Close memory" onClick={() => {
-                setSelected(null);
-                setEditing(false);
-              }} type="button"><X size={20} /></button>
+              <button className="lightbox-close" aria-label="Close memory" onClick={closeViewer} type="button"><X size={20} /></button>
               {selected.media && <div className="viewer-toolbar" aria-label="Viewer controls">
-                <button aria-label="Previous photo or video" disabled={viewerItems.length < 2} onClick={() => navigateViewer(-1)} type="button"><ArrowLeft size={16} /></button>
-                <button aria-label={slideshowPlaying ? "Pause slideshow" : "Start slideshow"} disabled={viewerItems.length < 2} onClick={() => setSlideshowPlaying((playing) => !playing)} type="button">
-                  {slideshowPlaying ? <Pause size={16} /> : <Play size={16} />}
+                <button
+                  aria-label="Previous photo or video"
+                  className="viewer-nav-button"
+                  disabled={viewerIndex <= 0 && page === 0}
+                  onClick={() => navigateViewer(-1)}
+                  type="button"
+                >
+                  <ArrowLeft aria-hidden="true" size={16} /><span>PREV</span>
                 </button>
-                <button aria-label="Next photo or video" disabled={viewerItems.length < 2} onClick={() => navigateViewer(1)} type="button"><ArrowRight size={16} /></button>
+                <button
+                  aria-label="Next photo or video"
+                  className="viewer-nav-button"
+                  disabled={viewerIndex < 0 || (viewerIndex === viewerItems.length - 1 && !hasMore)}
+                  onClick={() => navigateViewer(1)}
+                  type="button"
+                >
+                  <span>NEXT</span><ArrowRight aria-hidden="true" size={16} />
+                </button>
                 {selected.media.resourceType === "image" ? <>
                   <button aria-label="Zoom out" disabled={imageZoom <= 1} onClick={() => zoomImage(-0.25)} type="button"><Minus size={16} /></button>
                   <span>{Math.round(imageZoom * 100)}%</span>
@@ -972,6 +1070,8 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
                   ? <>
                     <video controls muted={false} playsInline preload="metadata" poster={selected.media.posterUrl} ref={videoRef} src={selected.media.url} style={{ transform: `rotate(${videoRotation}deg)`, ...(videoRotation % 180 ? { width: `${Math.max(1, Math.min(viewerSize.width * videoRatio, viewerSize.height))}px`, maxWidth: "none", maxHeight: "none" } : {}) }} onLoadedMetadata={(event) => {
                       const video = event.currentTarget;
+                      video.muted = false;
+                      video.volume = 1;
                       if (video.videoWidth && video.videoHeight) setVideoRatio(video.videoWidth / video.videoHeight);
                     }} />
                     <button className="video-sound-button" onClick={() => {
@@ -1047,39 +1147,42 @@ export function MemoryBrowser({ mode, initialQuery = "", displayName = "Our memo
         )}
       </AnimatePresence>
 
-      <AnimatePresence>
-        {deleteConfirmation && (
-          <motion.div
-            animate={{ opacity: 1 }}
-            className="delete-confirm-backdrop"
-            exit={{ opacity: 0 }}
-            initial={{ opacity: 0 }}
-            onClick={(event) => {
-              if (event.target === event.currentTarget) setDeleteConfirmation(null);
-            }}
-            role="presentation"
-          >
-            <motion.section
-              aria-labelledby="delete-confirm-title"
-              aria-modal="true"
-              className="delete-confirm-dialog"
-              initial={reducedMotion ? false : { y: 10, scale: 0.98 }}
-              animate={{ y: 0, scale: 1 }}
-              exit={{ y: 6, scale: 0.98 }}
-              role="alertdialog"
-              transition={{ duration: reducedMotion ? 0 : 0.18 }}
+      {typeof document !== "undefined" && createPortal(
+        <AnimatePresence>
+          {deleteConfirmation && (
+            <motion.div
+              animate={{ opacity: 1 }}
+              className="delete-confirm-backdrop"
+              exit={{ opacity: 0 }}
+              initial={{ opacity: 0 }}
+              onClick={(event) => {
+                if (event.target === event.currentTarget) setDeleteConfirmation(null);
+              }}
+              role="presentation"
             >
-              <span className="delete-confirm-icon"><Trash2 aria-hidden="true" size={19} /></span>
-              <h2 id="delete-confirm-title">{deleteConfirmation.title}</h2>
-              <p>{deleteConfirmation.description}</p>
-              <div className="delete-confirm-actions">
-                <button className="outline-button" onClick={() => setDeleteConfirmation(null)} type="button">Cancel</button>
-                <button className="danger-button" onClick={deleteConfirmation.onConfirm} type="button">{deleteConfirmation.confirmLabel}</button>
-              </div>
-            </motion.section>
-          </motion.div>
-        )}
-      </AnimatePresence>
+              <motion.section
+                aria-labelledby="delete-confirm-title"
+                aria-modal="true"
+                className="delete-confirm-dialog"
+                initial={reducedMotion ? false : { y: 10, scale: 0.98 }}
+                animate={{ y: 0, scale: 1 }}
+                exit={{ y: 6, scale: 0.98 }}
+                role="alertdialog"
+                transition={{ duration: reducedMotion ? 0 : 0.18 }}
+              >
+                <span className="delete-confirm-icon"><Trash2 aria-hidden="true" size={19} /></span>
+                <h2 id="delete-confirm-title">{deleteConfirmation.title}</h2>
+                <p>{deleteConfirmation.description}</p>
+                <div className="delete-confirm-actions">
+                  <button className="outline-button" onClick={() => setDeleteConfirmation(null)} ref={deleteCancelButton} type="button">Cancel</button>
+                  <button className="danger-button" onClick={deleteConfirmation.onConfirm} type="button">{deleteConfirmation.confirmLabel}</button>
+                </div>
+              </motion.section>
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body,
+      )}
     </main>
   );
 }

@@ -6,6 +6,7 @@ export interface PrivateSpaceRecord {
   slug: string;
   createdBy: Types.ObjectId;
   description?: string;
+  profileBannerMediaAssetId?: Types.ObjectId;
 }
 
 const privateSpaceSchema = new Schema<PrivateSpaceRecord>(
@@ -14,6 +15,7 @@ const privateSpaceSchema = new Schema<PrivateSpaceRecord>(
     slug: { type: String, required: true, trim: true, lowercase: true, maxlength: 80 },
     createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
     description: { type: String, trim: true, maxlength: 500 },
+    profileBannerMediaAssetId: { type: Schema.Types.ObjectId, ref: "MediaAsset" },
   },
   { timestamps: true },
 );
