@@ -112,6 +112,7 @@ export async function createImageKitObject(
     ["useUniqueFileName", "false"],
     ["overwriteFile", "false"],
     ["isPrivateFile", "true"],
+    ["isPublished", "true"],
   ] as const;
   const fieldParts = fields.map(([name, value]) =>
     `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`,

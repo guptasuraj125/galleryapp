@@ -95,12 +95,14 @@ async function completeUpload(request: Request) {
       height = object.height;
       duration = object.duration;
       const normalizedPath = object.filePath?.replace(/^\/+/, "");
+      const normalizedStorageKey = item.storageKey?.replace(/^\/+/, "");
+      const expectedFileType = item.resourceType === "image" ? "image" : "non-image";
       if (
         object.fileId !== item.publicId ||
-        object.mime !== item.contentType ||
+        object.fileType !== expectedFileType ||
         object.size !== item.expectedBytes ||
-        !item.storageKey ||
-        normalizedPath !== item.storageKey
+        !normalizedStorageKey ||
+        normalizedPath !== normalizedStorageKey
       ) {
         return errorJson("ImageKit received an unexpected asset or content type.", 422);
       }
