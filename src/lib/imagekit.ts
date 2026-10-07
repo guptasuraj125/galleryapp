@@ -76,13 +76,6 @@ function buildImageKitSignedUrl(
   return client.helper.buildSrc({ urlEndpoint, src, signed: true, expiresIn: 3600 });
 }
 
-/**
- * Return an authenticated application URL for ImageKit media.
- * The application proxy verifies the current space membership, publishes
- * legacy draft assets when necessary, then redirects to a short-lived
- * ImageKit signed URL. This keeps private assets private and also repairs
- * older uploads that were accidentally created as unpublished.
- */
 export function buildImageKitUrl(
   filePath: string,
   resourceType: "image" | "video" = "image",
@@ -104,21 +97,26 @@ export async function getImageKitObjectMetadata(fileId: string) {
   return client.files.get(fileId);
 }
 
-/**
- * Older ImageKit uploads may have been created as unpublished/draft assets.
- * Private unpublished assets are not accessible through delivery URLs.
- */
+/** Publish legacy draft assets and wait until ImageKit reports them as published. */
 export async function ensureImageKitObjectPublished(fileId: string) {
   const { client } = getImageKit();
-  const file = await client.files.get(fileId);
-  if (file.isPublished === false) {
-    await client.files.update(fileId, {
-      publish: {
-        isPublished: true,
-        includeFileVersions: true,
-      },
-    });
+  let file = await client.files.get(fileId);
+  if (file.isPublished !== false) return file;
+
+  await client.files.update(fileId, {
+    publish: {
+      isPublished: true,
+      includeFileVersions: true,
+    },
+  });
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    file = await client.files.get(fileId);
+    if (file.isPublished !== false) return file;
   }
+
+  throw new Error("ImageKit did not finish publishing the asset in time.");
 }
 
 export async function getImageKitSignedDeliveryUrl(
@@ -127,8 +125,8 @@ export async function getImageKitSignedDeliveryUrl(
   resourceType: "image" | "video",
   variant: "thumbnail" | "poster" | "original",
 ) {
-  await ensureImageKitObjectPublished(fileId);
-  return buildImageKitSignedUrl(filePath, resourceType, variant);
+  const file = await ensureImageKitObjectPublished(fileId);
+  return buildImageKitSignedUrl(file.filePath ?? filePath, resourceType, variant);
 }
 
 export async function verifyImageKitObject(fileId: string) {
