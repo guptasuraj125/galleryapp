@@ -37,7 +37,7 @@ export function makeImageKitObjectKey(spaceId: string, filename: string, folderP
   return `memories/${spaceId}${cleanFolderPath ? `/${cleanFolderPath}` : ""}/${randomUUID()}-${safeName}`;
 }
 
-export function buildImageKitUrl(
+function buildImageKitSignedUrl(
   filePath: string,
   resourceType: "image" | "video" = "image",
   variant: "thumbnail" | "poster" | "original" = "original",
@@ -76,6 +76,29 @@ export function buildImageKitUrl(
   return client.helper.buildSrc({ urlEndpoint, src, signed: true, expiresIn: 3600 });
 }
 
+/**
+ * Return an authenticated application URL for ImageKit media.
+ * The application proxy verifies the current space membership, publishes
+ * legacy draft assets when necessary, then redirects to a short-lived
+ * ImageKit signed URL. This keeps private assets private and also repairs
+ * older uploads that were accidentally created as unpublished.
+ */
+export function buildImageKitUrl(
+  filePath: string,
+  resourceType: "image" | "video" = "image",
+  variant: "thumbnail" | "poster" | "original" = "original",
+) {
+  const trimmed = filePath.trim();
+  if (!trimmed) return "/api/media/imagekit";
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  const params = new URLSearchParams({
+    path: trimmed.replace(/^\/+/, ""),
+    type: resourceType,
+    variant,
+  });
+  return `/api/media/imagekit?${params.toString()}`;
+}
+
 export async function getImageKitObjectMetadata(fileId: string) {
   const { client } = getImageKit();
   return client.files.get(fileId);
@@ -83,8 +106,7 @@ export async function getImageKitObjectMetadata(fileId: string) {
 
 /**
  * Older ImageKit uploads may have been created as unpublished/draft assets.
- * Private unpublished assets return 404 from the delivery CDN even when the
- * signed URL is valid. Publish them once before generating delivery URLs.
+ * Private unpublished assets are not accessible through delivery URLs.
  */
 export async function ensureImageKitObjectPublished(fileId: string) {
   const { client } = getImageKit();
@@ -97,6 +119,16 @@ export async function ensureImageKitObjectPublished(fileId: string) {
       },
     });
   }
+}
+
+export async function getImageKitSignedDeliveryUrl(
+  fileId: string,
+  filePath: string,
+  resourceType: "image" | "video",
+  variant: "thumbnail" | "poster" | "original",
+) {
+  await ensureImageKitObjectPublished(fileId);
+  return buildImageKitSignedUrl(filePath, resourceType, variant);
 }
 
 export async function verifyImageKitObject(fileId: string) {
