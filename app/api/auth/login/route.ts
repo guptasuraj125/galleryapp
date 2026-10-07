@@ -9,6 +9,8 @@ import {
 import { connectToDatabase } from "@/src/lib/mongodb";
 import { User } from "@/src/models/User";
 import { consumeRateLimit } from "@/src/lib/rate-limit";
+import { errorJson, logApiError } from "@/src/lib/api-response";
+import { toMongoConnectionError } from "@/src/lib/mongodb-errors";
 
 export const runtime = "nodejs";
 
@@ -20,7 +22,7 @@ const loginSchema = z.object({
   ),
 });
 
-export async function POST(request: Request) {
+async function login(request: Request) {
   const origin = request.headers.get("origin");
   if (origin && origin !== new URL(request.url).origin) {
     return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
@@ -88,4 +90,17 @@ export async function POST(request: Request) {
     maxAge: SESSION_MAX_AGE,
   });
   return response;
+}
+
+export async function POST(request: Request) {
+  try {
+    return await login(request);
+  } catch (error) {
+    logApiError("auth-login", error);
+    const databaseError = toMongoConnectionError(error);
+    return errorJson(
+      databaseError?.userMessage ?? "Sign-in is temporarily unavailable. Check the server configuration and try again.",
+      503,
+    );
+  }
 }

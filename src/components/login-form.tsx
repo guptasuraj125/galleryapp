@@ -26,10 +26,15 @@ export function LoginForm() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ identifier, password }),
       });
-      const result = (await response.json()) as { error?: string };
+      const result = await response.json().catch((): { error?: string } | null => null);
 
       if (!response.ok) {
-        setError(result.error ?? "We couldn't open the door. Try again in a moment.");
+        setError(
+          result?.error ??
+            (response.status >= 500
+              ? "Sign-in is temporarily unavailable. Please try again in a moment."
+              : "We couldn't open the door. Try again in a moment."),
+        );
         return;
       }
 
