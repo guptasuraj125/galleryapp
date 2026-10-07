@@ -1,6 +1,5 @@
 import "server-only";
 import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 let client: S3Client | undefined;
 
@@ -17,6 +16,8 @@ export function getBackblaze() {
     region,
     endpoint,
     forcePathStyle: true,
+    requestChecksumCalculation: "WHEN_REQUIRED",
+    responseChecksumValidation: "WHEN_REQUIRED",
     credentials: { accessKeyId, secretAccessKey },
   });
   return { client, bucketName };
@@ -33,20 +34,22 @@ export function makeB2ObjectKey(spaceId: string, filename: string) {
   return `memories/${spaceId}/${crypto.randomUUID()}-${safeName}`;
 }
 
-export async function createB2DownloadUrl(key: string, contentType: string, filename: string) {
+export async function getB2Object(key: string, range?: string) {
   const { client, bucketName } = getBackblaze();
-  const safeDispositionName = filename.replace(/[\r\n"\\]/g, "_").slice(0, 200);
-  return getSignedUrl(client, new GetObjectCommand({
+  return client.send(new GetObjectCommand({
     Bucket: bucketName,
     Key: key,
-    ResponseContentType: contentType,
-    ResponseContentDisposition: `inline; filename="${safeDispositionName}"`,
-  }), { expiresIn: 60 * 60 * 24 * 7 });
+    ...(range ? { Range: range } : {}),
+  }));
+}
+
+export async function getB2ObjectMetadata(key: string) {
+  const { client, bucketName } = getBackblaze();
+  return client.send(new HeadObjectCommand({ Bucket: bucketName, Key: key }));
 }
 
 export async function verifyB2Object(key: string) {
-  const { client, bucketName } = getBackblaze();
-  return client.send(new HeadObjectCommand({ Bucket: bucketName, Key: key }));
+  return getB2ObjectMetadata(key);
 }
 
 export async function deleteB2Object(key: string) {

@@ -1,6 +1,5 @@
 import { Types } from "mongoose";
 import { z } from "zod";
-import { createB2DownloadUrl } from "@/src/lib/backblaze";
 import { getUserSpaceMembership } from "@/src/lib/auth";
 import { errorJson, isSameOrigin, logApiError, successJson } from "@/src/lib/api-response";
 import {
@@ -256,8 +255,9 @@ export async function GET(request: Request) {
     const deliveryByAssetId = new Map<string, { url: string; posterUrl?: string }>();
     await Promise.all(assets.map(async (asset) => {
       if (asset.provider === "backblaze") {
+        const key = asset.storageKey ?? asset.publicId;
         deliveryByAssetId.set(String(asset._id), {
-          url: await createB2DownloadUrl(asset.storageKey ?? asset.publicId, asset.contentType, asset.originalFilename),
+          url: `/api/media/content?${new URLSearchParams({ key }).toString()}`,
         });
       } else {
         const delivery = getAuthenticatedDeliveryUrls(

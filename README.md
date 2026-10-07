@@ -221,7 +221,7 @@ Check the B2 variables (`B2_APPLICATION_KEY_ID`, `B2_APPLICATION_KEY`, `B2_BUCKE
 
 ### Upload completes but media does not render
 
-Confirm the bucket is private but accessible to the configured B2 application key, and verify that the saved asset has the correct storage provider, object key, content type, and size. Browser delivery uses short-lived signed URLs; reload the page to request a fresh URL.
+Confirm the bucket is private but accessible to the configured B2 application key, and verify that the saved asset has the correct storage provider, object key, content type, and size. Backblaze media is streamed through the authenticated same-origin `/api/media/content` endpoint; the browser does not receive B2 credentials or signed URLs. Keep the session cookie enabled, and check the server logs for `media-proxy-b2` errors. Video playback supports byte-range requests.
 
 ### MongoDB transaction errors
 

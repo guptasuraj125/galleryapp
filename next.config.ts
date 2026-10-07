@@ -2,12 +2,6 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   async headers() {
-    let b2Origin = "";
-    try {
-      b2Origin = new URL(process.env.B2_ENDPOINT ?? "").origin;
-    } catch {
-      // Keep the policy valid if B2 is not configured in this environment.
-    }
     const scriptPolicy = process.env.NODE_ENV === "development"
       ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
       : "script-src 'self' 'unsafe-inline'";
@@ -27,9 +21,9 @@ const nextConfig: NextConfig = {
           scriptPolicy,
           "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
           "font-src 'self' https://fonts.gstatic.com",
-          `img-src 'self' data: blob: https://res.cloudinary.com${b2Origin ? ` ${b2Origin}` : ""}`,
-          `media-src 'self' blob: https://res.cloudinary.com${b2Origin ? ` ${b2Origin}` : ""}`,
-          `connect-src 'self' https://api.cloudinary.com${b2Origin ? ` ${b2Origin}` : ""}`,
+          "img-src 'self' data: blob: https://res.cloudinary.com",
+          "media-src 'self' blob: https://res.cloudinary.com",
+          "connect-src 'self' https://api.cloudinary.com",
         ].join("; "),
       },
       ...(process.env.NODE_ENV === "production"
